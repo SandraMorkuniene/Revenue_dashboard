@@ -190,7 +190,7 @@ st.write(f"Average Quote → Order Days: **{avg_quote_to_order:.1f}** (only won 
 
 # Approval & delays
 st.subheader("Approval Outcomes & Delays")
-approval_counts = fdf["Approval_Level"].value_counts().reset_index().rename(columns={"index":"Approval_Level","Approval_Level":"count"})
+approval_counts = df.groupby("Approval_Level").size().reset_index(name="count")
 st.bar_chart(approval_counts.set_index("Approval_Level")["count"])
 
 delay_summary = fdf.groupby("Extra_Cost_Reason").agg(count=("Lead_ID","count")).reset_index()
