@@ -1,5 +1,5 @@
 
-# streamlit_l2o_dashboard.py
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -32,7 +32,10 @@ def generate_data(n=500, start_date="2025-01-01"):
         weight_t = np.round(np.random.uniform(0.5, 25),1)
         service = np.random.choice(fleet_types, p=[0.4,0.3,0.2,0.1])
         # Lead -> Quote latency
-        lead_to_quote_days = int(np.random.choice([0,1,2,3,4,5,7,10], p=[0.1,0.25,0.2,0.15,0.1,0.05,0.075,0.05]))
+        prob = np.array([0.1,0.25,0.2,0.15,0.1,0.05,0.075,0.05])
+        prob = prob / prob.sum()  # normalize to sum=1
+        lead_to_quote_days = int(np.random.choice([0,1,2,3,4,5,7,10], p=prob))
+
         quote_date = lead_date + timedelta(days=lead_to_quote_days)
         # Quote -> Order probability depends on margin and response time
         base_cost = distance_km * (0.6 if service=="FTL" else 0.75 if service=="LTL" else 1.2 if service=="Reefer" else 1.5)
