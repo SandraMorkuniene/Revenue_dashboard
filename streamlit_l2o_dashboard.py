@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="L2O Profitability & Process Dashboard", layout="wide")
 
 st.title("Lead-to-Order (L2O) — Profitability & Process Dashboard (Prototype)")
-st.markdown("This prototype uses synthetic data. Replace `generate_data()` with your real data source.")
+st.markdown("This prototype uses synthetic data.")
 
 @st.cache_data
 def generate_data(n=500, start_date="2025-01-01"):
