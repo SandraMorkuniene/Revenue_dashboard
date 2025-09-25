@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -7,11 +5,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="L2O Profitability & Process Dashboard", layout="wide")
+st.set_page_config(page_title="L2O Profitability & Process Dashboard (Redesigned)", layout="wide")
+st.title("Lead-to-Order (L2O) — Profitability & Process Dashboard")
+st.caption("Prototype uses synthetic data.")
 
-st.title("Lead-to-Order (L2O) — Profitability & Process Dashboard (Prototype)")
-st.markdown("This prototype uses synthetic data.")
-
+# ----------------------
+# Data generation
+# ----------------------
 @st.cache_data
 def generate_data(n=500, start_date="2025-01-01"):
     np.random.seed(42)
@@ -31,28 +31,25 @@ def generate_data(n=500, start_date="2025-01-01"):
         distance_km = np.random.randint(50, 1500)
         weight_t = np.round(np.random.uniform(0.5, 25),1)
         service = np.random.choice(fleet_types, p=[0.4,0.3,0.2,0.1])
-        # Lead -> Quote latency
+        # Lead to Quote latency
         prob = np.array([0.1,0.25,0.2,0.15,0.1,0.05,0.075,0.05])
-        prob = prob / prob.sum()  # normalize to sum=1
+        prob = prob / prob.sum()
         lead_to_quote_days = int(np.random.choice([0,1,2,3,4,5,7,10], p=prob))
-
         quote_date = lead_date + timedelta(days=lead_to_quote_days)
-        # Quote -> Order probability depends on margin and response time
+
         base_cost = distance_km * (0.6 if service=="FTL" else 0.75 if service=="LTL" else 1.2 if service=="Reefer" else 1.5)
         overhead = base_cost * 0.12
         estimated_cost = base_cost + overhead + np.random.normal(0, 20)
-        # Market price signal
-        market_multiplier = np.random.uniform(0.9, 1.2)
         quoted_price = max(estimated_cost * np.random.uniform(1.08, 1.30), estimated_cost + 50)
-        # Discounts sometimes applied
+
         discount = 0.0
         if np.random.rand() < 0.18:
             discount = np.random.uniform(0.01, 0.25)
-            quoted_price = quoted_price * (1 - discount)
+            quoted_price *= (1 - discount)
+
         expected_margin = (quoted_price - estimated_cost) / quoted_price
-        # Negotiation iterations
         negotiation_iters = np.random.poisson(0.6)
-        # Approval rules simulated (some quotes get rejected)
+
         approval_flag = True
         approval_level = "Auto"
         if expected_margin < 0.10:
@@ -64,24 +61,22 @@ def generate_data(n=500, start_date="2025-01-01"):
                 approval_level = "Manager"
         elif expected_margin < 0.13:
             approval_level = "Manager"
-        # Quote outcome depends on price competitiveness and response time (faster wins more)
-        win_prob = np.clip(0.65 + (expected_margin - 0.12) - (lead_to_quote_days * 0.03) + (market_multiplier-1)*0.5, 0.05, 0.95)
+
+        win_prob = np.clip(0.65 + (expected_margin - 0.12) - (lead_to_quote_days * 0.03), 0.05, 0.95)
         won = np.random.rand() < win_prob
         quote_to_order_days = int(np.random.choice([0,1,2,3,5,7], p=[0.05,0.4,0.25,0.15,0.1,0.05]))
         order_date = quote_date + timedelta(days=quote_to_order_days) if won else None
 
-        # If won, actuals may vary
         actual_cost = estimated_cost + np.random.normal(0, estimated_cost*0.05)
-        # Simulate execution problems that add extra cost
         extra_cost = 0.0
         delay_flag = False
         extra_reason = None
         if won and np.random.rand() < 0.12:
-            # penalty or extra handling
             extra_cost = estimated_cost * np.random.uniform(0.05, 0.25)
             actual_cost += extra_cost
             delay_flag = True
             extra_reason = np.random.choice(["Delay","Empty_Return","Damage","Customs"])
+
         actual_revenue = quoted_price if won else 0.0
         actual_margin = (actual_revenue - actual_cost)/actual_revenue if won and actual_revenue>0 else None
 
@@ -117,139 +112,273 @@ def generate_data(n=500, start_date="2025-01-01"):
             "Extra_Cost_Reason": extra_reason
         })
     df = pd.DataFrame(leads)
-    # Time dims
     df["Lead_Month"] = pd.to_datetime(df["Lead_Date"]).dt.to_period("M").astype(str)
     df["Order_Month"] = pd.to_datetime(df["Order_Date"]).dt.to_period("M").astype(str)
+    # extra_cost derived column for won orders
+    df["Extra_Cost_Impact"] = df.apply(lambda r: (r["Actual_Cost"] - r["Planned_Cost"]) if (r["Quote_Won"] and pd.notnull(r["Actual_Cost"]) and pd.notnull(r["Planned_Cost"])) else 0.0, axis=1)
     return df
 
+# ----------------------
+# Load & Filters
+# ----------------------
 df = generate_data(800)
-
-# Sidebar filters
 st.sidebar.header("Filters & Parameters")
 date_min = st.sidebar.date_input("Leads since", value=pd.to_datetime(df["Lead_Date"]).min().date())
 date_max = st.sidebar.date_input("Leads before", value=pd.to_datetime(df["Lead_Date"]).max().date())
-selected_customers = st.sidebar.multiselect("Customer", options=sorted(df["Customer"].unique()), default=sorted(df["Customer"].unique()))
-selected_regions = st.sidebar.multiselect("Region", options=sorted(df["Region"].unique()), default=sorted(df["Region"].unique()))
-selected_service = st.sidebar.multiselect("Service Type", options=sorted(df["Service_Type"].unique()), default=sorted(df["Service_Type"].unique()))
+selected_customers = st.sidebar.multiselect("Customer (multi)", options=sorted(df["Customer"].unique()), default=sorted(df["Customer"].unique()))
+selected_regions = st.sidebar.multiselect("Region (multi)", options=sorted(df["Region"].unique()), default=sorted(df["Region"].unique()))
+selected_service = st.sidebar.multiselect("Service Type (multi)", options=sorted(df["Service_Type"].unique()), default=sorted(df["Service_Type"].unique()))
 margin_threshold = st.sidebar.slider("Alert Margin Threshold", min_value=0.0, max_value=0.3, value=0.12, step=0.01)
 
 mask = (pd.to_datetime(df["Lead_Date"]) >= pd.to_datetime(date_min)) & (pd.to_datetime(df["Lead_Date"]) <= pd.to_datetime(date_max))
-mask &= df["Customer"].isin(selected_customers)
-mask &= df["Region"].isin(selected_regions)
-mask &= df["Service_Type"].isin(selected_service)
+if selected_customers:
+    mask &= df["Customer"].isin(selected_customers)
+if selected_regions:
+    mask &= df["Region"].isin(selected_regions)
+if selected_service:
+    mask &= df["Service_Type"].isin(selected_service)
 fdf = df[mask].copy()
 
-# Top KPIs
-st.subheader("Executive KPIs")
-col1, col2, col3, col4 = st.columns(4)
-pipeline_value = fdf["Estimated_Cost"].sum() + (fdf["Estimated_Cost"].sum()*0.18)  # naive
-confirmed_revenue = fdf["Planned_Revenue"].sum()
-actual_revenue = fdf["Actual_Revenue"].sum()
-avg_expected_margin = fdf["Expected_Margin"].dropna().mean()
-avg_actual_margin = fdf["Actual_Margin"].dropna().mean()
+# safe helpers for empty filtered df
+def safe_mean(series):
+    if series.dropna().shape[0] == 0:
+        return None
+    return series.dropna().mean()
 
-col1.metric("Pipeline (est. potential)", f"${int(pipeline_value):,}")
-col2.metric("Quoted / Planned Revenue", f"${int(confirmed_revenue):,}")
-col3.metric("Actual Revenue (executed)", f"${int(actual_revenue):,}")
-col4.metric("Avg Expected Margin", f"{avg_expected_margin:.1%}" if not np.isnan(avg_expected_margin) else "n/a")
+# ----------------------
+# Tabs
+# ----------------------
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Executive Summary","Funnel & Margins","Process Efficiency","Root Causes","Alerts & Export"])
 
-# Funnel: Leads -> Quotes -> Orders (counts and revenue)
-st.subheader("Process Funnel & Conversion Rates")
-funnel_df = pd.DataFrame({
-    "stage": ["Leads","Quotes Sent","Orders Confirmed"],
-    "count": [len(fdf), fdf.shape[0], fdf[fdf["Quote_Won"]==True].shape[0]],
-    "value": [fdf["Estimated_Cost"].sum(), fdf["Quoted_Price"].sum(), fdf["Planned_Revenue"].sum()]
-})
-fig_funnel = px.funnel(funnel_df, x='value', y='stage', title="Revenue Funnel (Est → Quoted → Confirmed)")
-st.plotly_chart(fig_funnel, use_container_width=True)
+# ----------------------
+# Tab 1 — Executive
+# ----------------------
+with tab1:
+    st.subheader("📊 Executive KPIs ")
 
-# Expected vs Actual margin over time
-st.subheader("Margin Trend & Distribution")
-margins_time = fdf.groupby("Lead_Month").agg(
-    expected_margin=("Expected_Margin","mean"),
-    actual_margin=("Actual_Margin","mean"),
-    planned_revenue=("Planned_Revenue","sum"),
-    actual_revenue=("Actual_Revenue","sum")
-).reset_index()
-fig_margin = go.Figure()
-fig_margin.add_trace(go.Scatter(x=margins_time["Lead_Month"], y=margins_time["expected_margin"], mode="lines+markers", name="Expected Margin"))
-fig_margin.add_trace(go.Scatter(x=margins_time["Lead_Month"], y=margins_time["actual_margin"], mode="lines+markers", name="Actual Margin"))
-fig_margin.update_layout(title="Expected vs Actual Margin (by Lead Month)", xaxis_title="Month", yaxis_title="Margin")
-st.plotly_chart(fig_margin, use_container_width=True)
+    pipeline_value = 0.0
+    confirmed_revenue = 0.0
+    actual_revenue = 0.0
+    avg_expected_margin = None
+    avg_actual_margin = None
 
-# Margin distribution histogram
-fig_hist = px.histogram(fdf, x="Expected_Margin", nbins=30, title="Expected Margin Distribution (Quotes)")
-st.plotly_chart(fig_hist, use_container_width=True)
+    if not fdf.empty:
+        pipeline_value = fdf["Quoted_Price"].sum()
+        confirmed_revenue = fdf["Planned_Revenue"].sum()
+        actual_revenue = fdf["Actual_Revenue"].sum()
+        avg_expected_margin = safe_mean(fdf["Expected_Margin"])
+        avg_actual_margin = safe_mean(fdf["Actual_Margin"])
 
-# Bottleneck analysis: avg times
-st.subheader("Process Efficiency & Bottlenecks")
-avg_lead_to_quote = fdf["Lead_to_Quote_Days"].mean()
-avg_quote_to_order = fdf["Quote_to_Order_Days"].dropna().mean()
-st.write(f"Average Lead → Quote Days: **{avg_lead_to_quote:.1f}**")
-st.write(f"Average Quote → Order Days: **{avg_quote_to_order:.1f}** (only won quotes)")
+    col1, col2, col3, col4 = st.columns(4)
 
-# Approval & delays
-st.subheader("Approval Outcomes & Delays")
-approval_counts = df.groupby("Approval_Level").size().reset_index(name="count")
-st.bar_chart(approval_counts.set_index("Approval_Level")["count"])
+    col1.metric("Pipeline (Quoted Potential)", f"${int(pipeline_value):,}")
+    col2.metric("Planned Revenue (Won)", f"${int(confirmed_revenue):,}")
+    col3.metric("Actual Revenue (Executed)", f"${int(actual_revenue):,}")
+    col4.metric("Avg Actual Margin", f"{avg_actual_margin:.1%}" if avg_actual_margin is not None else "n/a")
+    # Expected vs Actual margin over time
+    #st.subheader("Margin Trend & Distribution")
+    margins_time = fdf.groupby("Lead_Month").agg(
+        expected_margin=("Expected_Margin","mean"),
+        actual_margin=("Actual_Margin","mean"),
+        planned_revenue=("Planned_Revenue","sum"),
+        actual_revenue=("Actual_Revenue","sum")
+    ).reset_index()
+    fig_margin = go.Figure()
+    fig_margin.add_trace(go.Scatter(x=margins_time["Lead_Month"], y=margins_time["expected_margin"], mode="lines+markers", name="Expected Margin"))
+    fig_margin.add_trace(go.Scatter(x=margins_time["Lead_Month"], y=margins_time["actual_margin"], mode="lines+markers", name="Actual Margin"))
+    fig_margin.update_layout(title="Expected vs Actual Margin (by Lead Month)", xaxis_title="Month", yaxis_title="Margin")
+    st.plotly_chart(fig_margin, use_container_width=True)
 
-delay_summary = fdf.groupby("Extra_Cost_Reason").agg(count=("Lead_ID","count")).reset_index()
-st.bar_chart(delay_summary.set_index("Extra_Cost_Reason")["count"])
+    st.markdown("---")
+    st.write("**Notes:** Pipeline uses quoted prices from the filtered set. Use the Funnel tab to inspect conversion and leakage." )
 
-# Root cause analysis: slicers and heatmap
-st.subheader("Root-Cause Drilldowns")
-colA, colB = st.columns(2)
-with colA:
-    slicer_customer = st.selectbox("Drill by Customer", options=["All"] + sorted(fdf["Customer"].unique()), index=0)
-with colB:
-    slicer_route = st.selectbox("Drill by Route", options=["All"] + sorted(fdf["Route"].unique()), index=0)
+# ----------------------
+# Tab 2 — Funnel & Margins
+# ----------------------
+with tab2:
+    st.subheader("🔻 Funnel (counts & conversion %)")
+    if fdf.empty:
+        st.info("No data for the selected filters — adjust filters to see funnel and margins.")
+    else:
+        leads_count = len(fdf)
+        quotes_count = fdf.shape[0]
+        orders_count = fdf[fdf["Quote_Won"]==True].shape[0]
 
-drill = fdf.copy()
-if slicer_customer != "All":
-    drill = drill[drill["Customer"]==slicer_customer]
-if slicer_route != "All":
-    drill = drill[drill["Route"]==slicer_route]
+        funnel_df = pd.DataFrame({
+            "stage": ["Leads","Quotes Sent","Orders Won"],
+            "count": [leads_count, quotes_count, orders_count],
+        })
+        funnel_df["conversion_from_prev"] = funnel_df["count"].pct_change().fillna(1)
+        funnel_df["conversion_label"] = (funnel_df["conversion_from_prev"]*100).apply(lambda x: f"{x:.0f}%")
 
-# Profitability by route & service
-profit_by_route = drill.groupby("Route").agg(avg_expected_margin=("Expected_Margin","mean"), avg_actual_margin=("Actual_Margin","mean"), count=("Lead_ID","count")).reset_index().sort_values("count", ascending=False).head(20)
-st.write("Top Routes (by volume) — Avg Expected vs Actual Margin")
-st.dataframe(profit_by_route.style.format({"avg_expected_margin":"{:.1%}","avg_actual_margin":"{:.1%}"}))
+        # Bar chart for absolute counts with conversion annotations
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=funnel_df["stage"], y=funnel_df["count"], text=funnel_df["count"], textposition='auto', name='Count'))
+        # add conversion % as annotations above bars (except first)
+        annotations = []
+        for i, row in funnel_df.iterrows():
+            if i>0:
+                annotations.append(dict(x=row['stage'], y=row['count']+max(funnel_df['count'])*0.03, text=row['conversion_label'], showarrow=False))
+        fig.update_layout(title='Funnel: Lead → Quote → Order (counts with conversion %)')
+        fig.update_layout(annotations=annotations)
+        st.plotly_chart(fig, use_container_width=True)
 
-# Sales behavior view
-st.subheader("Sales Behavior & Discounting")
-sales_table = fdf.groupby("Customer").agg(count_quotes=("Lead_ID","count"), avg_discount=("Discount","mean"), avg_expected_margin=("Expected_Margin","mean")).reset_index().sort_values("count_quotes", ascending=False)
-st.dataframe(sales_table.style.format({"avg_discount":"{:.2%}","avg_expected_margin":"{:.1%}"}))
+        st.markdown("**Conversion table**")
+        st.dataframe(funnel_df.style.format({"count":"{:,}", "conversion_from_prev":"{:.1%}"}), use_container_width=True)
 
-# Alerts & Actionable Items
-st.subheader("Alerts & Action Items (Profitability Gatekeeper)")
-alerts = fdf[(fdf["Expected_Margin"] < margin_threshold) | (fdf["Discount"] > 0.15) | (fdf["Approval_Level"]=="Rejected")]
-alerts_table = alerts[["Lead_ID","Lead_Date","Customer","Route","Service_Type","Quoted_Price","Estimated_Cost","Expected_Margin","Discount","Approval_Level","Quote_Won"]]
-st.dataframe(alerts_table.sort_values("Expected_Margin").reset_index(drop=True))
+    st.subheader("📈 Margin Distributions by Service & Region")
+    if fdf.empty:
+        st.info("No margin data to display.")
+    else:
+        # boxplot by service
+        fig_box_service = px.box(fdf, x='Service_Type', y='Expected_Margin', points='outliers', title='Expected Margin by Service Type')
+        st.plotly_chart(fig_box_service, use_container_width=True)
 
-st.markdown("### Suggested Actions (generated):")
-suggestions = []
-# Simple heuristic suggestions
-if alerts.shape[0] > 0:
-    # top reasons
-    top_customers = alerts["Customer"].value_counts().head(3).to_dict()
-    for c,r in top_customers.items():
-        suggestions.append(f"- Review pricing and approval rules for **{c}**: {r} alerts flagged.")
-    suggestions.append("- Update cost library for routes with frequent extra costs (check Extra_Cost_Reason).")
-    suggestions.append("- Enforce approval gate for quotes below margin threshold or require manager sign-off.")
-else:
-    suggestions.append("- No critical alerts in the filtered set. Continue monitoring.")
+        # violin by region
+        fig_violin_region = px.violin(fdf, x='Region', y='Expected_Margin', box=True, points='outliers', title='Expected Margin Distribution by Region')
+        st.plotly_chart(fig_violin_region, use_container_width=True)
 
-for s in suggestions:
-    st.write(s)
+# ----------------------
+# Tab 3 — Process Efficiency
+# ----------------------
+with tab3:
+    st.subheader("Cycle Times & Approvals")
+    if fdf.empty:
+        st.info("No data for process efficiency.")
+    else:
+        avg_lead_to_quote = safe_mean(fdf["Lead_to_Quote_Days"]) or 0
+        avg_quote_to_order = safe_mean(fdf["Quote_to_Order_Days"]) or 0
+        col1, col2 = st.columns(2)
+        col1.metric("Avg Lead → Quote", f"{avg_lead_to_quote:.1f} days")
+        col2.metric("Avg Quote → Order (won)", f"{avg_quote_to_order:.1f} days")
 
-# Data export
-st.subheader("Download Sample Dataset (CSV)")
-@st.cache_data
-def convert_df_to_csv(df):
-    return df.to_csv(index=False).encode('utf-8')
+        st.subheader("⚖️ Approval Outcomes")
+        approval_counts = fdf.groupby("Approval_Level").size().reset_index(name="count")
+        st.bar_chart(approval_counts.set_index("Approval_Level"))
 
-csv = convert_df_to_csv(fdf)
-st.download_button("Download filtered data as CSV", csv, "l2o_sample_data.csv", "text/csv")
+        st.subheader("💸 Delay & Extra-Cost Impact by Reason")
+        # extra cost impact grouped by reason
+        extra_cost_df = fdf[fdf['Extra_Cost_Impact']>0].groupby('Extra_Cost_Reason').agg(count=('Lead_ID','count'), total_extra_cost=('Extra_Cost_Impact','sum')).reset_index().sort_values('total_extra_cost', ascending=False)
+        if extra_cost_df.empty:
+            st.info("No extra-cost events in the filtered set.")
+        else:
+            fig_extra = px.bar(extra_cost_df, x='Extra_Cost_Reason', y='total_extra_cost', text='count', title='Total Extra Cost Impact by Reason (sum of Actual - Planned)')
+            st.plotly_chart(fig_extra, use_container_width=True)
+            st.write(extra_cost_df.style.format({"total_extra_cost":"${:,.2f}"}))
+
+# ----------------------
+# Tab 4 — Root Causes (multi-select drilldowns)
+# ----------------------
+with tab4:
+    st.subheader("🔍 Root Cause Drilldowns (multi-select)")
+    if fdf.empty:
+        st.info("No data for drilldowns.")
+    else:
+        slicer_customers = st.multiselect("Customer", options=sorted(fdf["Customer"].unique()), default=sorted(fdf["Customer"].unique()))
+        slicer_routes = st.multiselect("Route", options=sorted(fdf["Route"].unique()), default=sorted(fdf["Route"].unique()))
+        slicer_services = st.multiselect("Service Type", options=sorted(fdf["Service_Type"].unique()), default=sorted(fdf["Service_Type"].unique()))
+
+        drill = fdf.copy()
+        if slicer_customers:
+            drill = drill[drill['Customer'].isin(slicer_customers)]
+        if slicer_routes:
+            drill = drill[drill['Route'].isin(slicer_routes)]
+        if slicer_services:
+            drill = drill[drill['Service_Type'].isin(slicer_services)]
+
+        st.write(f"Filtered set: {len(drill):,} leads — showing top routes by volume")
+        profit_by_route = drill.groupby("Route").agg(avg_expected_margin=("Expected_Margin","mean"), avg_actual_margin=("Actual_Margin","mean"), count=("Lead_ID","count"))\
+                             .reset_index().sort_values("count", ascending=False).head(20)
+        st.dataframe(profit_by_route.style.format({"avg_expected_margin":"{:.1%}","avg_actual_margin":"{:.1%}"}))
+
+        st.write("Sales behavior (filtered)")
+        sales_table = drill.groupby("Customer").agg(count_quotes=("Lead_ID","count"), avg_discount=("Discount","mean"), avg_expected_margin=("Expected_Margin","mean")).reset_index().sort_values("count_quotes", ascending=False)
+        st.dataframe(sales_table.style.format({"avg_discount":"{:.2%}","avg_expected_margin":"{:.1%}"}))
+
+# ----------------------
+# Tab 5 — Alerts & Export
+# ----------------------
+with tab5:
+    st.subheader("🚨 Alerts — prioritized & grouped")
+    if fdf.empty:
+        st.info("No data for alerts.")
+    else:
+        alerts = fdf[(fdf["Expected_Margin"] < margin_threshold) | (fdf["Discount"] > 0.15) | (fdf["Approval_Level"]=="Rejected")].copy()
+        alerts = alerts.sort_values(["Expected_Margin","Discount"], ascending=[True, False])
+
+        # conditional formatting using pandas Styler
+        def highlight_alerts(row):
+            styles = []
+            # color Expected_Margin cell
+            if pd.notnull(row['Expected_Margin']) and row['Expected_Margin'] < margin_threshold:
+                styles.append('background-color: rgba(255,0,0,0.2)')
+            else:
+                styles.append('')
+            # color Discount
+            if row['Discount'] > 0.15:
+                styles.append('background-color: rgba(255,165,0,0.25)')
+            else:
+                styles.append('')
+            # Approval level
+            if row['Approval_Level'] == 'Rejected':
+                styles.append('background-color: rgba(128,128,128,0.2)')
+            else:
+                styles.append('')
+            return styles
+
+        if alerts.empty:
+            st.write("No alerts in filtered set — good job!")
+        else:
+            display_cols = ["Lead_ID","Lead_Date","Customer","Route","Service_Type","Quoted_Price","Estimated_Cost","Expected_Margin","Discount","Approval_Level","Quote_Won"]
+            styled = alerts[display_cols].style.format({"Quoted_Price":"${:,.2f}","Estimated_Cost":"${:,.2f}","Expected_Margin":"{:.1%}","Discount":"{:.1%}"})
+            # apply per-row style: map to columns in order: Expected_Margin, Discount, Approval_Level -> we will apply with subset
+            # pandas Styler row-wise apply returns list matching number of columns; to keep simple, style only specific columns
+            def style_expected_margin(val):
+                if pd.notnull(val) and val < margin_threshold:
+                    return 'background-color: rgba(255,0,0,0.2)'
+                return ''
+            def style_discount(val):
+                if val > 0.15:
+                    return 'background-color: rgba(255,165,0,0.25)'
+                return ''
+            def style_approval(val):
+                if val == 'Rejected':
+                    return 'background-color: rgba(128,128,128,0.2)'
+                return ''
+
+            styled = styled.applymap(style_expected_margin, subset=['Expected_Margin'])
+            styled = styled.applymap(style_discount, subset=['Discount'])
+            styled = styled.applymap(style_approval, subset=['Approval_Level'])
+
+            st.write("### Alerts (detailed)")
+            st.dataframe(styled, use_container_width=True)
+
+            # Grouped summary by customer & route
+            st.write("### Alerts summary — group by Customer & Route")
+            grouped_alerts = alerts.groupby(["Customer","Route"]).agg(alerts_count=("Lead_ID","count"), avg_expected_margin=("Expected_Margin","mean"), total_quoted=("Quoted_Price","sum")).reset_index().sort_values('alerts_count', ascending=False)
+            st.dataframe(grouped_alerts.style.format({"avg_expected_margin":"{:.1%}", "total_quoted":"${:,.2f}"}), use_container_width=True)
+
+            # Suggested actions
+            st.markdown("### Suggested Actions")
+            suggestions = []
+            top_customers = alerts['Customer'].value_counts().head(3).to_dict()
+            for c,r in top_customers.items():
+                suggestions.append(f"- Review pricing & approval rules for **{c}** — {r} alerts flagged.")
+            suggestions.append("- Investigate routes with repeated extra-cost impacts and update cost library.")
+            suggestions.append("- Enforce manager approvals for quotes below threshold.")
+            for s in suggestions:
+                st.write(s)
+
+            # Export: full filtered data and alerts-only
+            @st.cache_data
+            def to_csv_bytes(df_in):
+                return df_in.to_csv(index=False).encode('utf-8')
+
+            col_export_1, col_export_2 = st.columns(2)
+            with col_export_1:
+                st.download_button("Download filtered data (CSV)", to_csv_bytes(fdf), "l2o_filtered_data.csv", "text/csv")
+            with col_export_2:
+                st.download_button("Download alerts only (CSV)", to_csv_bytes(alerts), "l2o_alerts.csv", "text/csv")
 
 st.markdown("---")
-st.caption("Prototype for demonstration. Replace synthetic generator with your real data source and adjust thresholds & business rules.")
+st.caption("Dashboard was updated.")
