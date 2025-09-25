@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="L2O Profitability & Process Dashboard (Redesigned)", layout="wide")
-st.title("🚚 Lead-to-Order (L2O) — Profitability & Process Dashboard")
-st.caption("Prototype with synthetic data — now with conversion %, extra-cost impact, conditional alert formatting, grouped alerts, multi-select drilldowns and robust empty-state handling.")
+st.title("Lead-to-Order (L2O) — Profitability & Process Dashboard")
+st.caption("Prototype with synthetic data.")
 
 # ----------------------
 # Data generation
@@ -154,7 +154,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["Executive Summary","Funnel & Margins","
 # Tab 1 — Executive
 # ----------------------
 with tab1:
-    st.subheader("📊 Executive KPIs (at a glance)")
+    st.subheader("📊 Executive KPIs ")
 
     pipeline_value = 0.0
     confirmed_revenue = 0.0
@@ -229,7 +229,7 @@ with tab2:
 # Tab 3 — Process Efficiency
 # ----------------------
 with tab3:
-    st.subheader("⏱️ Cycle Times & Approvals")
+    st.subheader("Cycle Times & Approvals")
     if fdf.empty:
         st.info("No data for process efficiency.")
     else:
@@ -368,4 +368,4 @@ with tab5:
                 st.download_button("Download alerts only (CSV)", to_csv_bytes(alerts), "l2o_alerts.csv", "text/csv")
 
 st.markdown("---")
-st.caption("Dashboard updated: funnel shows counts + conversion %, extra-cost impact plotted by reason, alerts highlighted and grouped, multi-select drilldowns and separate alerts export. Edge cases handled for empty filters.")
+st.caption("Dashboard updated.")
