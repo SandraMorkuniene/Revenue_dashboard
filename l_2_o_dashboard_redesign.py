@@ -175,6 +175,19 @@ with tab1:
     col2.metric("Planned Revenue (Won)", f"${int(confirmed_revenue):,}")
     col3.metric("Actual Revenue (Executed)", f"${int(actual_revenue):,}")
     col4.metric("Avg Actual Margin", f"{avg_actual_margin:.1%}" if avg_actual_margin is not None else "n/a")
+    # Expected vs Actual margin over time
+    st.subheader("Margin Trend & Distribution")
+    margins_time = fdf.groupby("Lead_Month").agg(
+        expected_margin=("Expected_Margin","mean"),
+        actual_margin=("Actual_Margin","mean"),
+        planned_revenue=("Planned_Revenue","sum"),
+        actual_revenue=("Actual_Revenue","sum")
+    ).reset_index()
+    fig_margin = go.Figure()
+    fig_margin.add_trace(go.Scatter(x=margins_time["Lead_Month"], y=margins_time["expected_margin"], mode="lines+markers", name="Expected Margin"))
+    fig_margin.add_trace(go.Scatter(x=margins_time["Lead_Month"], y=margins_time["actual_margin"], mode="lines+markers", name="Actual Margin"))
+    fig_margin.update_layout(title="Expected vs Actual Margin (by Lead Month)", xaxis_title="Month", yaxis_title="Margin")
+    st.plotly_chart(fig_margin, use_container_width=True)
 
     st.markdown("---")
     st.write("**Notes:** Pipeline uses quoted prices from the filtered set. Use the Funnel tab to inspect conversion and leakage." )
