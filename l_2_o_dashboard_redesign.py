@@ -176,7 +176,7 @@ with tab1:
     col3.metric("Actual Revenue (Executed)", f"${int(actual_revenue):,}")
     col4.metric("Avg Actual Margin", f"{avg_actual_margin:.1%}" if avg_actual_margin is not None else "n/a")
     # Expected vs Actual margin over time
-    st.subheader("Margin Trend & Distribution")
+    #st.subheader("Margin Trend & Distribution")
     margins_time = fdf.groupby("Lead_Month").agg(
         expected_margin=("Expected_Margin","mean"),
         actual_margin=("Actual_Margin","mean"),
