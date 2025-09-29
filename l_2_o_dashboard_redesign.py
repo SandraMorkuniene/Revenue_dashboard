@@ -22,8 +22,19 @@ def generate_data(n=500, start_date="2025-01-01"):
     regions = ["North","South","East","West"]
     routes = [f"City{a}-City{b}" for a in ["A","B","C","D"] for b in ["E","F","G","H"]]
     fleet_types = ["FTL","LTL","Reefer","Express"]
+    teams = ["Team Alpha", "Team Beta", "Team Gamma"]
+    managers = {"Team Alpha": "Manager A", "Team Beta": "Manager B", "Team Gamma": "Manager C"}
+    sales_reps = {
+    "Team Alpha": ["Rep1", "Rep2"],
+    "Team Beta": ["Rep3", "Rep4"],
+    "Team Gamma": ["Rep5", "Rep6"]
+}
+    
     for i in range(1, n+1):
         lead_date = start + timedelta(days=int(np.random.exponential(30)))
+        team = np.random.choice(teams)
+        rep = np.random.choice(sales_reps[team])
+        manager = managers[team]
         customer = np.random.choice(customers, p=[0.15,0.15,0.12,0.12,0.1,0.08,0.08,0.08,0.07,0.05])
         sector = np.random.choice(sectors)
         region = np.random.choice(regions)
@@ -83,6 +94,9 @@ def generate_data(n=500, start_date="2025-01-01"):
         leads.append({
             "Lead_ID": f"L{i:05d}",
             "Lead_Date": lead_date.date(),
+            "Sales_Team": team,
+            "Sales_Rep": rep,
+            "Manager": manager,
             "Customer": customer,
             "Customer_Sector": sector,
             "Region": region,
@@ -211,6 +225,7 @@ with tab2:
         funnel_df["conversion_from_prev"] = funnel_df["count"].pct_change().fillna(1)
         funnel_df["conversion_label"] = (funnel_df["conversion_from_prev"]*100).apply(lambda x: f"{x:.0f}%")
 
+    
         # Bar chart for absolute counts with conversion annotations
         fig = go.Figure()
         fig.add_trace(go.Bar(x=funnel_df["stage"], y=funnel_df["count"], text=funnel_df["count"], textposition='auto', name='Count'))
@@ -223,20 +238,96 @@ with tab2:
         fig.update_layout(annotations=annotations)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("**Conversion table**")
-        st.dataframe(funnel_df.style.format({"count":"{:,}", "conversion_from_prev":"{:.1%}"}), use_container_width=True)
+        if not fdf.empty:
+            teams = fdf["Sales_Team"].unique()
+            funnel_data = []
+        
+            for team in teams:
+                team_df = fdf[fdf["Sales_Team"] == team]
+                leads_count = len(team_df)
+                quotes_count = team_df.shape[0]  # all quotes generated for the team
+                orders_count = team_df[team_df["Quote_Won"] == True].shape[0]
+                # Conversion rates
+                conv_leads_to_quotes = quotes_count / leads_count if leads_count>0 else 0
+                conv_quotes_to_orders = orders_count / quotes_count if quotes_count>0 else 0
+                conv_leads_to_orders = orders_count / leads_count if leads_count>0 else 0
+        
+                funnel_data.extend([
+                    {"Stage":"Leads","Sales_Team":team,"Count":leads_count,"Conversion":1.0},
+                    {"Stage":"Quotes Sent","Sales_Team":team,"Count":quotes_count,"Conversion":conv_leads_to_quotes},
+                    {"Stage":"Orders Won","Sales_Team":team,"Count":orders_count,"Conversion":conv_leads_to_orders}
+                ])
+        
+            funnel_team_df = pd.DataFrame(funnel_data)
+        
+            # Stacked bar chart: x = Stage, y = Count, color = Sales_Team
+            fig = px.bar(
+                funnel_team_df,
+                x="Stage",
+                y="Count",
+                color="Sales_Team",
+                text="Count",
+                barmode="stack",
+                title="Funnel by Stage & Team (Counts & Conversion %)"
+            )
 
-    st.subheader("📈 Margin Distributions by Service & Region")
+    # Add conversion % annotations for each team (optional)
+    annotations = []
+    for idx, row in funnel_team_df.iterrows():
+        if row["Stage"] == "Orders Won":  # show % above bar for Orders
+            annotations.append(dict(
+                x=row["Stage"],
+                y=row["Count"],
+                text=f"{row['Conversion']*100:.1f}%",
+                showarrow=False,
+                xanchor='center',
+                yanchor='bottom'
+            ))
+    fig.update_layout(annotations=annotations)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+    st.markdown("**Conversion table**")
+    st.dataframe(funnel_df.style.format({"count":"{:,}", "conversion_from_prev":"{:.1%}"}), use_container_width=True)
+
+    st.subheader("📈 Margin Distributions by Team, Service & Region")
     if fdf.empty:
         st.info("No margin data to display.")
     else:
         # boxplot by service
-        fig_box_service = px.box(fdf, x='Service_Type', y='Expected_Margin', points='outliers', title='Expected Margin by Service Type')
-        st.plotly_chart(fig_box_service, use_container_width=True)
+        #fig_box_service = px.box(fdf, x='Service_Type', y='Expected_Margin', points='outliers', title='Expected Margin by Service Type')
+        #st.plotly_chart(fig_box_service, use_container_width=True)
+        fig_box_service_team = px.box(fdf, x='Service_Type', y='Expected_Margin', color='Sales_Team',
+                              points='outliers', title='Expected Margin by Service Type & Team')
+        st.plotly_chart(fig_box_service_team, use_container_width=True)
+        
 
         # violin by region
         fig_violin_region = px.violin(fdf, x='Region', y='Expected_Margin', box=True, points='outliers', title='Expected Margin Distribution by Region')
         st.plotly_chart(fig_violin_region, use_container_width=True)
+        
+        discount_by_rep = fdf.groupby(["Sales_Rep", "Sales_Team"]).agg(
+            avg_discount=("Discount","mean"),
+            avg_expected_margin=("Expected_Margin","mean"),
+            total_quotes=("Lead_ID","count")
+        ).reset_index().sort_values("avg_discount", ascending=False)
+        discount_by_rep["avg_discount_pct"] = discount_by_rep["avg_discount"] * 100
+        
+        fig_discount = px.scatter(
+            discount_by_rep,
+            x="avg_discount_pct",
+            y="avg_expected_margin",
+            size="total_quotes",
+            color="Sales_Team",
+            hover_data=["Sales_Rep","total_quotes"],
+            title="💰 Discount Discipline by Rep: Avg Discount vs Expected Margin",
+            labels={"avg_discount":"Average Discount %", "avg_expected_margin":"Average Expected Margin"}
+        )
+        fig_discount.update_layout(xaxis_tickformat=".2f")
+        fig_discount.update_xaxes(dtick=0.5)
+        st.plotly_chart(fig_discount, use_container_width=True)
+
+
 
 # ----------------------
 # Tab 3 — Process Efficiency
@@ -253,8 +344,23 @@ with tab3:
         col2.metric("Avg Quote → Order (won)", f"{avg_quote_to_order:.1f} days")
 
         st.subheader("⚖️ Approval Outcomes")
-        approval_counts = fdf.groupby("Approval_Level").size().reset_index(name="count")
-        st.bar_chart(approval_counts.set_index("Approval_Level"))
+        #approval_counts = fdf.groupby("Approval_Level").size().reset_index(name="count")
+        #st.bar_chart(approval_counts.set_index("Approval_Level"))
+        approval_counts = fdf.groupby(["Approval_Level","Sales_Team"]).size().reset_index(name="count")
+
+        fig = px.bar(
+            approval_counts,
+            x="Approval_Level",
+            y="count",
+            color="Sales_Team",
+            title="⚖️ Approval Outcomes by Team",
+            barmode="stack",  # stacked bars
+            text="count"
+        )
+        fig.update_traces(textposition='auto')
+        st.plotly_chart(fig, use_container_width=True)
+        
+    
 
         st.subheader("💸 Delay & Extra-Cost Impact by Reason")
         # extra cost impact grouped by reason
@@ -277,6 +383,7 @@ with tab4:
         slicer_customers = st.multiselect("Customer", options=sorted(fdf["Customer"].unique()), default=sorted(fdf["Customer"].unique()))
         slicer_routes = st.multiselect("Route", options=sorted(fdf["Route"].unique()), default=sorted(fdf["Route"].unique()))
         slicer_services = st.multiselect("Service Type", options=sorted(fdf["Service_Type"].unique()), default=sorted(fdf["Service_Type"].unique()))
+        slicer_team = st.multiselect("Team", options=sorted(fdf["Sales_Team"].unique()), default=sorted(fdf["Sales_Team"].unique()))
 
         drill = fdf.copy()
         if slicer_customers:
@@ -285,6 +392,8 @@ with tab4:
             drill = drill[drill['Route'].isin(slicer_routes)]
         if slicer_services:
             drill = drill[drill['Service_Type'].isin(slicer_services)]
+        if slicer_team:
+            drill = drill[drill['Sales_Team'].isin(slicer_team)]
 
         st.write(f"Filtered set: {len(drill):,} leads — showing top routes by volume")
         profit_by_route = drill.groupby("Route").agg(avg_expected_margin=("Expected_Margin","mean"), avg_actual_margin=("Actual_Margin","mean"), count=("Lead_ID","count"))\
@@ -329,7 +438,7 @@ with tab5:
         if alerts.empty:
             st.write("No alerts in filtered set — good job!")
         else:
-            display_cols = ["Lead_ID","Lead_Date","Customer","Route","Service_Type","Quoted_Price","Estimated_Cost","Expected_Margin","Discount","Approval_Level","Quote_Won"]
+            display_cols = ["Lead_ID","Lead_Date","Customer","Route","Service_Type", "Sales_Rep","Quoted_Price","Estimated_Cost","Expected_Margin","Discount","Approval_Level","Quote_Won"]
             styled = alerts[display_cols].style.format({"Quoted_Price":"${:,.2f}","Estimated_Cost":"${:,.2f}","Expected_Margin":"{:.1%}","Discount":"{:.1%}"})
             # apply per-row style: map to columns in order: Expected_Margin, Discount, Approval_Level -> we will apply with subset
             # pandas Styler row-wise apply returns list matching number of columns; to keep simple, style only specific columns
@@ -355,7 +464,7 @@ with tab5:
 
             # Grouped summary by customer & route
             st.write("### Alerts summary — group by Customer & Route")
-            grouped_alerts = alerts.groupby(["Customer","Route"]).agg(alerts_count=("Lead_ID","count"), avg_expected_margin=("Expected_Margin","mean"), total_quoted=("Quoted_Price","sum")).reset_index().sort_values('alerts_count', ascending=False)
+            grouped_alerts = alerts.groupby(["Customer","Route", "Sales_Rep"]).agg(alerts_count=("Lead_ID","count"), avg_expected_margin=("Expected_Margin","mean"), total_quoted=("Quoted_Price","sum")).reset_index().sort_values('alerts_count', ascending=False)
             st.dataframe(grouped_alerts.style.format({"avg_expected_margin":"{:.1%}", "total_quoted":"${:,.2f}"}), use_container_width=True)
 
             # Suggested actions
