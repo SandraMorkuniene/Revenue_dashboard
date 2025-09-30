@@ -353,7 +353,7 @@ with tab3:
             x="Approval_Level",
             y="count",
             color="Sales_Team",
-            title="⚖️ Approval Outcomes by Team",
+            title="Approval Outcomes by Team",
             barmode="stack",  # stacked bars
             text="count"
         )
